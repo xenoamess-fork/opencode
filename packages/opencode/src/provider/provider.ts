@@ -1194,7 +1194,12 @@ function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model
         video: model.modalities?.output?.includes("video") ?? false,
         pdf: model.modalities?.output?.includes("pdf") ?? false,
       },
-      interleaved: model.interleaved ?? false,
+      interleaved:
+        model.interleaved ??
+        ((model.provider?.npm ?? provider.npm ?? "@ai-sdk/openai-compatible") === "@ai-sdk/openai-compatible" &&
+        (model.id.includes("deepseek") || (model.id.toLowerCase().includes("kimi") && model.reasoning))
+          ? { field: "reasoning_content" }
+          : false),
     },
     release_date: model.release_date ?? "",
     variants: {},
@@ -1422,7 +1427,9 @@ export const layer = Layer.effect(
                 interleaved:
                   model.interleaved ??
                   existingModel?.capabilities.interleaved ??
-                  (!existingModel && apiNpm === "@ai-sdk/openai-compatible" && apiID.includes("deepseek")
+                  (!existingModel &&
+                  apiNpm === "@ai-sdk/openai-compatible" &&
+                  (apiID.includes("deepseek") || (apiID.toLowerCase().includes("kimi") && model.reasoning))
                     ? { field: "reasoning_content" }
                     : false),
               },
