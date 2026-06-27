@@ -2,7 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Image } from "@/image/image"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Cause, Deferred, Effect, Exit, Layer, Context, Scope, Schema } from "effect"
+import { Cause, Deferred, Effect, Exit, Latch, Layer, Context, Scope, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { Agent } from "@/agent/agent"
 import { Config } from "@/config/config"
@@ -45,6 +45,7 @@ export interface Handle {
     },
   ) => Effect.Effect<void>
   readonly process: (streamInput: LLM.StreamInput) => Effect.Effect<Result>
+  readonly retryNow: () => Effect.Effect<void>
 }
 
 type Input = {
@@ -622,6 +623,8 @@ export const layer = Layer.effect(
         yield* status.set(ctx.sessionID, { type: "idle" })
       })
 
+      const retryWake = yield* Latch.make(false)
+
       const process = Effect.fn("SessionProcessor.process")(function* (streamInput: LLM.StreamInput) {
         yield* Effect.logInfo("process", {
           "session.id": input.sessionID,
@@ -662,6 +665,7 @@ export const layer = Layer.effect(
                 provider: input.model.providerID,
                 parse,
                 maxDelayMs: retryMaxDelayMs,
+                wake: retryWake,
                 set: (info) => {
                   return status.set(ctx.sessionID, {
                     type: "retry",
@@ -683,6 +687,10 @@ export const layer = Layer.effect(
         })
       })
 
+      const retryNow = Effect.fn("SessionProcessor.retryNow")(function* () {
+        yield* Latch.open(retryWake)
+      })
+
       return {
         get message() {
           return ctx.assistantMessage
@@ -690,6 +698,7 @@ export const layer = Layer.effect(
         updateToolCall,
         completeToolCall,
         process,
+        retryNow,
       } satisfies Handle
     })
 

@@ -11,6 +11,9 @@ import { SessionStatus } from "./status"
 export interface Interface {
   readonly assertNotBusy: (sessionID: SessionID) => Effect.Effect<void, Session.BusyError>
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
+  readonly retryNow: (sessionID: SessionID) => Effect.Effect<void>
+  readonly registerHandle: (sessionID: SessionID, handle: { retryNow: () => Effect.Effect<void> }) => Effect.Effect<void>
+  readonly unregisterHandle: (sessionID: SessionID, handle: { retryNow: () => Effect.Effect<void> }) => Effect.Effect<void>
   readonly ensureRunning: (
     sessionID: SessionID,
     onInterrupt: Effect.Effect<SessionV1.WithParts>,
@@ -36,6 +39,7 @@ export const layer = Layer.effect(
       Effect.fn("SessionRunState.state")(function* () {
         const scope = yield* Scope.Scope
         const runners = new Map<SessionID, Runner.Runner<SessionV1.WithParts>>()
+        const handles = new Map<SessionID, { retryNow: () => Effect.Effect<void> }>()
         yield* Effect.addFinalizer(
           Effect.fnUntraced(function* () {
             yield* Effect.forEach(runners.values(), (runner) => runner.cancel, {
@@ -43,13 +47,14 @@ export const layer = Layer.effect(
               discard: true,
             })
             runners.clear()
+            handles.clear()
           }),
         )
-        return { runners, scope }
+        return { runners, handles, scope }
       }),
     )
 
-    const runner = Effect.fn("SessionRunState.runner")(function* (
+    const ensureRunner = Effect.fn("SessionRunState.ensureRunner")(function* (
       sessionID: SessionID,
       onInterrupt: Effect.Effect<SessionV1.WithParts>,
     ) {
@@ -59,6 +64,7 @@ export const layer = Layer.effect(
       const next = Runner.make<SessionV1.WithParts>(data.scope, {
         onIdle: Effect.gen(function* () {
           data.runners.delete(sessionID)
+          data.handles.delete(sessionID)
           yield* status.set(sessionID, { type: "idle" })
         }),
         onBusy: status.set(sessionID, { type: "busy" }),
@@ -66,6 +72,33 @@ export const layer = Layer.effect(
       })
       data.runners.set(sessionID, next)
       return next
+    })
+
+    const runner = Effect.fn("SessionRunState.runner")(function* (sessionID: SessionID) {
+      const data = yield* InstanceState.get(state)
+      return data.runners.get(sessionID)
+    })
+
+    const registerHandle = Effect.fn("SessionRunState.registerHandle")(function* (
+      sessionID: SessionID,
+      handle: { retryNow: () => Effect.Effect<void> },
+    ) {
+      const data = yield* InstanceState.get(state)
+      data.handles.set(sessionID, handle)
+    })
+
+    const unregisterHandle = Effect.fn("SessionRunState.unregisterHandle")(function* (
+      sessionID: SessionID,
+      handle: { retryNow: () => Effect.Effect<void> },
+    ) {
+      const data = yield* InstanceState.get(state)
+      if (data.handles.get(sessionID) === handle) data.handles.delete(sessionID)
+    })
+
+    const retryNow = Effect.fn("SessionRunState.retryNow")(function* (sessionID: SessionID) {
+      const data = yield* InstanceState.get(state)
+      const handle = data.handles.get(sessionID)
+      if (handle) yield* handle.retryNow()
     })
 
     const assertNotBusy = Effect.fn("SessionRunState.assertNotBusy")(function* (sessionID: SessionID) {
@@ -90,7 +123,7 @@ export const layer = Layer.effect(
       onInterrupt: Effect.Effect<SessionV1.WithParts>,
       work: Effect.Effect<SessionV1.WithParts>,
     ) {
-      return yield* (yield* runner(sessionID, onInterrupt)).ensureRunning(work)
+      return yield* (yield* ensureRunner(sessionID, onInterrupt)).ensureRunning(work)
     })
 
     const startShell = Effect.fn("SessionRunState.startShell")(function* (
@@ -99,12 +132,12 @@ export const layer = Layer.effect(
       work: Effect.Effect<SessionV1.WithParts>,
       ready?: Latch.Latch,
     ) {
-      return yield* (yield* runner(sessionID, onInterrupt))
+      return yield* (yield* ensureRunner(sessionID, onInterrupt))
         .startShell(work, ready)
         .pipe(Effect.catchTag("RunnerBusy", () => Effect.fail(busyError(sessionID))))
     })
 
-    return Service.of({ assertNotBusy, cancel, ensureRunning, startShell })
+    return Service.of({ assertNotBusy, cancel, retryNow, registerHandle, unregisterHandle, ensureRunning, startShell })
   }),
 )
 

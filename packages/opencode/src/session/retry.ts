@@ -1,6 +1,6 @@
 import type { NamedError } from "@opencode-ai/core/util/error"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Cause, Clock, Duration, Effect, Schedule } from "effect"
+import { Cause, Clock, Duration, Effect, Latch, Schedule } from "effect"
 import { MessageV2 } from "./message-v2"
 import { iife } from "@/util/iife"
 import { isRecord } from "@/util/record"
@@ -182,6 +182,7 @@ export function policy(opts: {
   parse: (error: unknown) => Err
   set: (input: { attempt: number; message: string; action?: Retryable["action"]; next: number }) => Effect.Effect<void>
   maxDelayMs?: number
+  wake?: Latch.Latch
 }) {
   return Schedule.fromStepWithMetadata(
     Effect.succeed((meta: Schedule.InputMetadata<unknown>) => {
@@ -197,7 +198,11 @@ export function policy(opts: {
           action: retry.action,
           next: now + wait,
         })
-        return [meta.attempt, Duration.millis(wait)] as [number, Duration.Duration]
+        const sleep = Effect.sleep(Duration.millis(wait))
+        const slept = opts.wake
+          ? yield* Effect.race(sleep, Latch.await(opts.wake).pipe(Effect.as(false as const)))
+          : yield* sleep.pipe(Effect.as(true as const))
+        return [meta.attempt, Duration.millis(slept ? wait : 0)] as [number, Duration.Duration]
       })
     }),
   )

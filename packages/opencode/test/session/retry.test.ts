@@ -4,7 +4,7 @@ import { SessionV1 } from "@opencode-ai/core/v1/session"
 import type { NamedError } from "@opencode-ai/core/util/error"
 import { APICallError } from "ai"
 import { setTimeout as sleep } from "node:timers/promises"
-import { Effect, Schedule, Schema } from "effect"
+import { Duration, Effect, Fiber, Latch, Schedule, Schema, Scope } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { SessionRetry } from "../../src/session/retry"
@@ -133,6 +133,37 @@ describe("session.retry.delay", () => {
         attempt: 2,
         message: "boom",
       })
+    }),
+  )
+
+  it.instance("policy wakes immediately when wake latch is opened", () =>
+    Effect.gen(function* () {
+      const sessionID = SessionID.make("session-retry-wake-test")
+      const error = apiError({ "retry-after": "3600" })
+      const status = yield* SessionStatus.Service
+      const wake = yield* Latch.make(false)
+      const scope = yield* Scope.Scope
+
+      const step = yield* Schedule.toStepWithMetadata(
+        SessionRetry.policy({
+          provider: "test",
+          parse: Schema.decodeUnknownSync(SessionV1.APIError.Schema),
+          wake,
+          set: (info) =>
+            status.set(sessionID, {
+              type: "retry",
+              attempt: info.attempt,
+              message: info.message,
+              next: info.next,
+            }),
+        }),
+      )
+
+      const fiber = yield* step(error).pipe(Effect.forkIn(scope))
+      yield* Latch.open(wake)
+      const result = yield* Fiber.join(fiber)
+
+      expect(result.duration).toEqual(Duration.millis(0))
     }),
   )
 })

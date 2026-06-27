@@ -2013,6 +2013,9 @@ export type Config = {
     preserve_recent_tokens?: number
     reserved?: number
   }
+  retry?: {
+    max_delay_ms?: number
+  }
   experimental?: {
     disable_paste_summary?: boolean
     batch_tool?: boolean
@@ -9980,6 +9983,36 @@ export type SessionAbortResponses = {
 }
 
 export type SessionAbortResponse = SessionAbortResponses[keyof SessionAbortResponses]
+
+export type SessionRetryNowData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/retry_now"
+}
+
+export type SessionRetryNowErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+}
+
+export type SessionRetryNowError = SessionRetryNowErrors[keyof SessionRetryNowErrors]
+
+export type SessionRetryNowResponses = {
+  /**
+   * Retry requested
+   */
+  200: boolean
+}
+
+export type SessionRetryNowResponse = SessionRetryNowResponses[keyof SessionRetryNowResponses]
 
 export type SessionInitData = {
   body?: {

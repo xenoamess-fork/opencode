@@ -416,6 +416,20 @@ export function Prompt(props: PromptProps) {
         },
       },
       {
+        title: "Retry now",
+        name: "session.retry_now",
+        category: "Session",
+        hidden: true,
+        enabled: status().type === "retry",
+        run: () => {
+          if (!props.sessionID) return
+          void sdk.client.session.retryNow({
+            sessionID: props.sessionID,
+          })
+          dialog.clear()
+        },
+      },
+      {
         title: "Open editor",
         category: "Session",
         name: "prompt.editor",
